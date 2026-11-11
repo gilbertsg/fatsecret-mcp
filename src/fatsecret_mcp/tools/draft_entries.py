@@ -126,11 +126,13 @@ def register(
         says so, so tell the User. Show custom_food.source and any custom_food.warnings. Prefer it over
         a US catalog match for Singapore dishes, and ask about the portion and add-ons first.
 
-        A Nutrition Label item logs a branded product missing from the catalog. When custom Foods are on
-        and the label was read from the packaging (estimated=false), it becomes a custom Food with the
-        label's own values, created once and reused by product name; otherwise it is logged as a
-        Stand-in: the closest catalog Food for search_phrase, in the amount whose kcal match the label,
-        under the product's name. Ask for a photo of the Nutrition Label
+        A Nutrition Label item logs a branded product or a dish missing from the catalog. When custom
+        Foods are on, it becomes a custom Food with the values given, per 100 g, created once and reused
+        by name: a label read from the packaging (estimated=false) keeps the name, and an estimate
+        (estimated=true, e.g. a dish the User described without a recipe) is named "<name> (est.)" under
+        the brand Estimate. Say in the draft that confirming creates a permanent Food. Otherwise it is
+        logged as a Stand-in: the closest catalog Food for search_phrase, in the amount whose kcal match
+        the label, under the product's name. Ask for a photo of the Nutrition Label
         unless the User already gave its values.
         For a product logged before as a Stand-in,
         reuse its label from this conversation or your memory, and ask again otherwise.
@@ -333,8 +335,8 @@ async def _prepared_item(
         return _sg_food(item, user, custom)
 
     if isinstance(item, NutritionLabelDraftInput):
-        # A label read from packaging becomes a custom Food when they're on; an estimate stays a Stand-in.
-        if custom is not None and custom.registry is not None and not item.nutrition_label.estimated:
+        # A label or an estimate becomes a custom Food when they're on, else a Stand-in.
+        if custom is not None and custom.registry is not None:
             return _labelled_product(item, user, custom, user_today)
 
         return await _stand_in(item, fatsecret, food_cache)
@@ -493,7 +495,7 @@ def _labelled_product(
         exists=registered is not None,
         grams=item.grams,
         servings=None,
-        entry_name=item.product_name,
+        entry_name=wanted.name,
         assumption=item.assumption,
         warnings=tuple(warnings),
     )

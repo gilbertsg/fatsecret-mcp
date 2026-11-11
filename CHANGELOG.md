@@ -5,6 +5,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 ## Fork (unreleased)
 
 - `search_sg_foods` over a local SG FoodID table, and custom Foods for HPB dishes and labelled products. See `docs/sg-foods.md`.
+- Estimated dishes become custom Foods named `<dish> (est.)` (brand `Estimate`), reused by dish name, instead of Stand-ins.
 
 ## [0.3.0] - 2026-10-29
 

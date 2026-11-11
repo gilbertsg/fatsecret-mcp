@@ -27,7 +27,11 @@ Needs FatSecret's Premier plan (free for qualifying developers). Without it, beh
   values. The server reads them from the table; Claude passes only the id and the amount.
 - A Nutrition Label item with `estimated=false` also becomes a custom Food, named like the product and reused by
   name. A label read again with values more than 5% apart shows a warning and reuses the stored Food;
-  `recipe_changed=true` creates a new Food named with the year. Estimated labels stay Stand-ins.
+  `recipe_changed=true` creates a new Food named with the year. 
+- A Nutrition Label item with `estimated=true` (a dish with no HPB entry and no label) becomes a custom Food named
+  `<dish> (est.)` under the brand `Estimate`, with the per-100 g values Claude gave. It is reused by dish name
+  (key `estimate:<name>`), so a later estimate of the same dish logs the stored values and warns if its own
+  differ by more than 5%. The draft says it creates a permanent Food, so nothing is made before the User confirms.
 - Each Food has one Serving: HPB's default serving (e.g. "1 plate (323 g)"), or 100 g for a label.
 - FatSecret refuses a created Food without a `brand_name` (error 101), so every Food has a brand: `HPB` for
   dishes (the app shows "Steamed chicken rice (HPB)") and `Label` for labelled products ("Oat Bar (Label)").

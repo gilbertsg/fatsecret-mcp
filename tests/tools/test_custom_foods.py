@@ -466,44 +466,37 @@ async def test_a_label_becomes_a_custom_food_reused_by_name_with_a_warning_when_
     assert len(fatsecret.created_foods) == 1
 
 
-async def test_an_estimated_label_stays_a_stand_in_and_creates_no_food(
+async def test_an_estimate_becomes_an_est_custom_food_reused_by_dish_name(
     connect_custom: Callable[[str, CustomFoodSupport | None], Client],
     fatsecret: FakeFatSecret,
     store: SgFoodStore,
     registry: CustomFoodRegistry,
 ) -> None:
     custom = CustomFoodSupport(store=store, registry=registry)
-    bar = Food(
-        id="bar",
-        name="Granola Bar",
-        brand=None,
-        servings=[
-            Serving(
-                id="bar-1",
-                description="100 g",
-                metric_amount=100,
-                metric_unit="g",
-                number_of_units=100,
-                nutrition=Nutrition(kcal=420, protein=10, fat=15, carbohydrate=60),
-            )
-        ],
-    )
+    rice = label(product_name="Egg fried rice", kcal=170, protein=6, fat=7, carbohydrate=20, grams=350)
 
-    fatsecret.add_food(bar)
-    fatsecret.set_search_results("granola bar", [CatalogFood(id="bar", name="Granola Bar", brand=None)])
-
-    estimated = label()
-
-    estimated["nutrition_label"]["estimated"] = True
+    rice["nutrition_label"]["estimated"] = True
 
     async with connect_custom("jakub", custom) as client:
-        drafted = await draft(client, [estimated])
-        confirmed = await confirm(client, drafted["draft_id"])
+        first = await draft(client, [rice])
+        confirmed = await confirm(client, first["draft_id"])
+        again = await draft(client, [{**rice, "grams": 200}])
+        drifted = await draft(client, [{**rice, "nutrition_label": {**rice["nutrition_label"], "kcal": 220}}])
 
-    assert drafted["items"][0]["stand_in"] is not None
-    assert drafted["items"][0]["custom_food"] is None
+    item = first["items"][0]
+
     assert confirmed["failure"] is None
-    assert fatsecret.created_foods == []
+    assert (item["name"], item["amount"], item["kcal"]) == ("Egg fried rice (est.)", "350 g", 595)
+    assert item["custom_food"]["creates_new_food"] is True
+    assert item["custom_food"]["source"] == "estimate, not measured"
+    assert item["stand_in"] is None
+    assert again["items"][0]["custom_food"]["creates_new_food"] is False
+    assert again["items"][0]["kcal"] == 340
+    assert "kcal 170 -> 220" in drifted["items"][0]["custom_food"]["warnings"][0]
+    assert len(fatsecret.created_foods) == 1
+    assert fatsecret.created_foods[0].brand == "Estimate"
+    assert registry.get("jakub", "estimate:egg fried rice") is not None
+    assert registry.get("jakub", "label:egg fried rice") is None
 
 
 async def test_with_custom_foods_off_hpb_dishes_are_refused_and_labels_stay_stand_ins(

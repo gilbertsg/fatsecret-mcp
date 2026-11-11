@@ -24,6 +24,8 @@ from fatsecret_mcp.domain.models import (
 LABEL_DRIFT = 0.05
 LABEL_SERVING_G = 100.0
 LABEL_BRAND = "Label"
+ESTIMATE_BRAND = "Estimate"
+ESTIMATE_SUFFIX = " (est.)"
 MAX_FOOD_NAME_LENGTH = 100
 
 
@@ -31,10 +33,10 @@ def hpb_key(hpb_id: str) -> str:
     return f"hpb:{hpb_id}"
 
 
-def label_key(product_name: str, *, recipe_year: int | None = None) -> str:
-    """The registry key of a labelled product: its name, lower-cased, without punctuation or extra spaces."""
+def label_key(product_name: str, *, recipe_year: int | None = None, estimated: bool = False) -> str:
+    """The registry key of a labelled or estimated product: its name, lower-cased, without punctuation."""
     words = re.findall(r"\w+", product_name.lower())
-    key = "label:" + " ".join(words)
+    key = ("estimate:" if estimated else "label:") + " ".join(words)
 
     return f"{key}:{recipe_year}" if recipe_year is not None else key
 
@@ -42,18 +44,26 @@ def label_key(product_name: str, *, recipe_year: int | None = None) -> str:
 def label_custom_food(
     product_name: str, label: NutritionLabel, *, recipe_changed: bool, today: date
 ) -> CustomFood:
-    """The Food for a product read from its packaging, with the label's values for a 100 g Serving."""
+    """The Food for a product read from its packaging, or a dish estimated without any source.
+
+    Both get a 100 g Serving. An estimate is named "<dish> (est.)" under the brand "Estimate", so it
+    can't be mistaken for a measured value in the diary, and is reused by dish name like a label.
+    """
+    estimated = label.estimated
     year = today.year if recipe_changed else None
     name = f"{product_name} ({year})" if recipe_changed else product_name
 
+    if estimated:
+        name += ESTIMATE_SUFFIX
+
     return CustomFood(
-        key=label_key(product_name, recipe_year=year),
+        key=label_key(product_name, recipe_year=year, estimated=estimated),
         name=name[:MAX_FOOD_NAME_LENGTH],
         serving_label="100 g",
         serving_g=LABEL_SERVING_G,
         per_serving=label.per_100_g,
-        source="nutrition label",
-        brand=LABEL_BRAND,
+        source="estimate, not measured" if estimated else "nutrition label",
+        brand=ESTIMATE_BRAND if estimated else LABEL_BRAND,
     )
 
 
@@ -62,7 +72,7 @@ def per_100_g(food: CustomFood) -> Nutrition:
 
 
 def label_drift(stored: CustomFood, read: Nutrition) -> str | None:
-    """Why a label read now differs from the stored Food's values, when it differs by more than 5%."""
+    """Why a label or estimate now differs from the stored Food's values, when it differs by more than 5%."""
     before = per_100_g(stored)
     parts: list[str] = []
 
@@ -77,7 +87,7 @@ def label_drift(stored: CustomFood, read: Nutrition) -> str | None:
         return None
 
     return (
-        "This label differs from the stored Food per 100 g: " + ", ".join(parts) + ". The stored Food is "
+        "These values differ from the stored Food per 100 g: " + ", ".join(parts) + ". The stored Food is "
         "used. If the recipe really changed, draft again with recipe_changed=true to create a new Food."
     )
 
