@@ -29,6 +29,8 @@ Needs FatSecret's Premier plan (free for qualifying developers). Without it, beh
   name. A label read again with values more than 5% apart shows a warning and reuses the stored Food;
   `recipe_changed=true` creates a new Food named with the year. Estimated labels stay Stand-ins.
 - Each Food has one Serving: HPB's default serving (e.g. "1 plate (323 g)"), or 100 g for a label.
+- FatSecret refuses a created Food without a `brand_name` (error 101), so every Food has a brand: `HPB` for
+  dishes (the app shows "Steamed chicken rice (HPB)") and `Label` for labelled products ("Oat Bar (Label)").
 - The draft says whether confirming creates a **new permanent Food**. FatSecret has no API to edit, delete or list
   custom Foods, so the registry (`registry.sqlite`, per User and key) is the only record. It is written the moment
   FatSecret returns a Food id, so a retry after a failed entry never creates a second Food. Keep it on a volume
@@ -36,4 +38,7 @@ Needs FatSecret's Premier plan (free for qualifying developers). Without it, beh
 - Known gap: if FatSecret doesn't answer a `food.create.v2` call, the Food may exist without a registry entry.
   `confirm_draft` then asks the User to check the Food Diary, and a retry could create a duplicate.
 - `food.create.v2` gives only a food id. The server reads the Food back with the User's token (`food.get.v5`) to
-  find its Serving and logs `number_of_units` in that Serving's units.
+  find its Serving and logs `number_of_units` in that Serving's units. Checked live on 2026-11-11: that works, and
+  fractional amounts (0.5 of a plate) are accepted.
+- Known gap: the diary shows these entries as "1 serving", not in grams, so an edit or repeat of one by a new
+  amount in grams can't find the Serving's weight (the catalog doesn't know custom Foods). Log it again instead.
