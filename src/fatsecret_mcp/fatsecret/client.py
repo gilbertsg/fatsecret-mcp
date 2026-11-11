@@ -105,7 +105,7 @@ class FatSecretApi:
         return parsing.created_food_entry_id(body)
 
     async def create_custom_food(self, user: AccessToken, food: CustomFood) -> str:
-        body = await self._call("food.create.v2", _custom_food_params(food), user, http_method="POST")
+        body = await self._call("food.create.v2", custom_food_params(food), user, http_method="POST")
 
         return parsing.created_food_id(body)
 
@@ -208,10 +208,17 @@ class FatSecretApi:
             raise UpstreamFailure(type(error).__name__) from None
 
 
-def _custom_food_params(food: CustomFood) -> dict[str, str]:
-    """The `food.create.v2` parameters: one Serving in grams, with the nutrition HPB or the label gives."""
+def custom_food_params(food: CustomFood) -> dict[str, str]:
+    """The `food.create.v2` parameters: one Serving in grams, with the nutrition HPB or the label gives.
+
+    FatSecret refuses a created Food without a brand_name (error 101), so every one has a brand.
+    """
+    # FatSecret shows "name (brand)", so a name that already ends with the brand is sent without it.
+    suffix = f" ({food.brand})"
+    food_name = food.name.removesuffix(suffix) if food.brand else food.name
     params = {
-        "food_name": food.name,
+        "food_name": food_name,
+        "brand_name": food.brand,
         "serving_size": f"{food.serving_label} ({food.serving_g:g} g)",
         "serving_amount": parsing.number_text(food.serving_g),
         "serving_amount_unit": "g",

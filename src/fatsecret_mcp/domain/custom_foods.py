@@ -23,6 +23,7 @@ from fatsecret_mcp.domain.models import (
 # A label read again from a photo rarely matches to the digit; more than this apart is a different product.
 LABEL_DRIFT = 0.05
 LABEL_SERVING_G = 100.0
+LABEL_BRAND = "Label"
 MAX_FOOD_NAME_LENGTH = 100
 
 
@@ -52,6 +53,7 @@ def label_custom_food(
         serving_g=LABEL_SERVING_G,
         per_serving=label.per_100_g,
         source="nutrition label",
+        brand=LABEL_BRAND,
     )
 
 

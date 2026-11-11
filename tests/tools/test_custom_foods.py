@@ -15,6 +15,7 @@ from mcp import Client
 from fatsecret_mcp.config.models import Household
 from fatsecret_mcp.domain.models import CatalogFood, Food, Nutrition, Serving
 from fatsecret_mcp.fatsecret.budget import daily_budget
+from fatsecret_mcp.fatsecret.client import custom_food_params
 from fatsecret_mcp.fatsecret.errors import UpstreamFailure
 from fatsecret_mcp.fatsecret.food_cache import FoodCache
 from fatsecret_mcp.server import build_server
@@ -289,6 +290,34 @@ async def test_confirming_creates_the_food_once_and_logs_the_dishs_own_values(
     assert [(entry.name, entry.number_of_units) for entry in entries] == [("Steamed chicken rice (HPB)", 1)]
     assert entries[0].nutrition.kcal == pytest.approx(474.81)
     assert entries[0].food_id == "custom-1"
+
+
+async def test_the_food_is_created_with_the_brand_fatsecret_requires_and_only_known_nutrients(
+    connect_custom: Callable[[str, CustomFoodSupport | None], Client],
+    fatsecret: FakeFatSecret,
+    store: SgFoodStore,
+    registry: CustomFoodRegistry,
+) -> None:
+    custom = CustomFoodSupport(store=store, registry=registry)
+
+    async with connect_custom("jakub", custom) as client:
+        hpb = await draft(client, [{"hpb_id": CHICKEN_RICE, "servings": 1}])
+        await confirm(client, hpb["draft_id"])
+        bar = await draft(client, [label()])
+        await confirm(client, bar["draft_id"])
+
+    dish, product = (custom_food_params(food) for food in fatsecret.created_foods)
+
+    assert (dish["food_name"], dish["brand_name"]) == ("Steamed chicken rice", "HPB")
+    assert (dish["serving_size"], dish["serving_amount"], dish["serving_amount_unit"]) == (
+        "1 plate (323 g)",
+        "323",
+        "g",
+    )
+    assert dish["sodium"] == "969"
+    assert {"saturated_fat", "sugar", "fiber"}.isdisjoint(dish)
+    assert (product["food_name"], product["brand_name"], product["calories"]) == ("Oat Bar", "Label", "400")
+    assert {"sodium", "fiber", "saturated_fat"}.isdisjoint(product)
 
 
 async def test_the_same_dish_three_times_creates_one_food_and_later_drafts_say_it_exists(

@@ -144,6 +144,7 @@ def custom_food_from_dict(values: dict[str, Any]) -> CustomFood:
         fibre=values["fibre"],
         sodium_mg=values["sodium_mg"],
         source=values["source"],
+        brand=values.get("brand", ""),
     )
 
 

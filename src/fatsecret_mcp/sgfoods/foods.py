@@ -7,7 +7,8 @@ from fatsecret_mcp.domain.drafts import InvalidDraftItem
 from fatsecret_mcp.domain.models import CustomFood, Nutrition
 from fatsecret_mcp.sgfoods.store import SgFood
 
-SUFFIX = " (HPB)"
+BRAND = "HPB"
+SUFFIX = f" ({BRAND})"
 
 
 def hpb_custom_food(food: SgFood) -> CustomFood:
@@ -50,6 +51,7 @@ def hpb_custom_food(food: SgFood) -> CustomFood:
         fibre=_scaled(food.fibre_100g, scale),
         sodium_mg=_scaled(food.sodium_mg_100g, scale),
         source=f"HPB SG FoodID, {food.data_source or 'unknown basis'}{year}",
+        brand=BRAND,
     )
 
 

@@ -134,6 +134,8 @@ class CustomFood:
     fibre: float | None = None
     sodium_mg: float | None = None
     source: str = ""
+    brand: str = ""
+    """FatSecret makes every created Food a Brand Food, which needs a brand: the app shows "name (brand)"."""
 
 
 @dataclass(frozen=True)
