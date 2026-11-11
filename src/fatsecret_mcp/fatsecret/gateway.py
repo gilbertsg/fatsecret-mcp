@@ -9,7 +9,16 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Protocol
 
-from fatsecret_mcp.domain.models import CatalogFood, DraftEntry, EntryEdit, Food, FoodEntry, Meal, Nutrition
+from fatsecret_mcp.domain.models import (
+    CatalogFood,
+    CustomFood,
+    DraftEntry,
+    EntryEdit,
+    Food,
+    FoodEntry,
+    Meal,
+    Nutrition,
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +71,17 @@ class FatSecretGateway(Protocol):
 
         It works for any Food the User could log in the app, including Foods the catalog can't return.
         """
+        ...
+
+    async def create_custom_food(self, user: AccessToken, food: CustomFood) -> str:
+        """Create a custom Food in the User's own account (Premier); returns its id.
+
+        FatSecret can neither edit nor delete it afterwards, so a caller creates each Food once.
+        """
+        ...
+
+    async def get_custom_food(self, user: AccessToken, food_id: str) -> Food:
+        """A Food with its Servings as the User sees it; a custom Food isn't in the catalog."""
         ...
 
     async def edit_food_entry(self, user: AccessToken, edit: EntryEdit) -> None:

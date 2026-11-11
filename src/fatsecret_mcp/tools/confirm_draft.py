@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from typing import Annotated
 
@@ -20,12 +21,15 @@ from fatsecret_mcp.domain.models import (
     ConfirmedChange,
     ConfirmedEntry,
     Draft,
+    DraftEntry,
     EntryChange,
     EntryRemoval,
 )
 from fatsecret_mcp.fatsecret.diary import UserDiary
 from fatsecret_mcp.fatsecret.errors import FatSecretError, NotFound, UpstreamFailure
 from fatsecret_mcp.fatsecret.gateway import AccessToken, FatSecretGateway
+from fatsecret_mcp.sgfoods.ensure import ensure_custom_food
+from fatsecret_mcp.sgfoods.support import CustomFoodSupport
 from fatsecret_mcp.tools.schemas import DraftConfirmation, DraftId, as_tool_result
 
 
@@ -36,6 +40,7 @@ def register(
     diary: UserDiary,
     clock: Clock,
     signing_key: SecretStr,
+    custom: CustomFoodSupport | None = None,
 ) -> None:
     annotations = ToolAnnotations(
         title="Confirm Draft",
@@ -78,8 +83,11 @@ def register(
             if earlier is not None:
                 return as_tool_result(DraftConfirmation.of(earlier, repeated=True))
 
+            if _has_custom_foods(draft) and (custom is None or custom.registry is None):
+                raise ToolError("Custom Foods are off on this server, so this Draft can't be confirmed.")
+
             try:
-                confirmation = await _write_draft(draft, user.fatsecret, fatsecret)
+                confirmation = await _write_draft(draft, user, fatsecret, custom)
             finally:
                 # Even a failed or cancelled write may have saved something, so each day is read afresh.
                 with anyio.CancelScope(shield=True):
@@ -91,11 +99,14 @@ def register(
         return as_tool_result(DraftConfirmation.of(confirmation, repeated=False))
 
 
-async def _write_draft(draft: Draft, user: AccessToken, fatsecret: FatSecretGateway) -> Confirmation:
+async def _write_draft(
+    draft: Draft, user_config: User, fatsecret: FatSecretGateway, custom: CustomFoodSupport | None
+) -> Confirmation:
     """Write the new entries, then the changes, stopping at the first failure; fails when nothing was written.
 
     New entries go first, so a failure part-way leaves a duplicate the User can see, never a gap.
     """
+    user = user_config.fatsecret
     entries: list[ConfirmedEntry] = []
     changes: list[ConfirmedChange] = []
     failure: FatSecretError | None = None
@@ -108,8 +119,9 @@ async def _write_draft(draft: Draft, user: AccessToken, fatsecret: FatSecretGate
 
             if failure is None:
                 try:
+                    written = await _loggable(entry, user_config, user, fatsecret, custom)
                     food_entry_id = await fatsecret.create_food_entry(
-                        user, entry, additions.meal, additions.diary_day
+                        user, written, additions.meal, additions.diary_day
                     )
                 except FatSecretError as error:
                     failure = error
@@ -147,6 +159,34 @@ async def _write_draft(draft: Draft, user: AccessToken, fatsecret: FatSecretGate
         entries=tuple(entries),
         changes=tuple(changes),
         failure=_unwritten(failure, failed_change),
+    )
+
+
+def _has_custom_foods(draft: Draft) -> bool:
+    return draft.additions is not None and any(entry.custom_food for entry in draft.additions.entries)
+
+
+async def _loggable(
+    entry: DraftEntry,
+    user_config: User,
+    user: AccessToken,
+    fatsecret: FatSecretGateway,
+    custom: CustomFoodSupport | None,
+) -> DraftEntry:
+    """The entry with the ids of its Food; a custom Food the registry doesn't know is created first."""
+    if entry.custom_food is None:
+        return entry
+
+    assert custom is not None
+    assert custom.registry is not None
+
+    loggable = await ensure_custom_food(user_config.id, user, entry.custom_food, custom.registry, fatsecret)
+
+    return replace(
+        entry,
+        food_id=loggable.food_id,
+        serving_id=loggable.serving_id,
+        number_of_units=round(entry.number_of_units * loggable.serving_units, 3),
     )
 
 

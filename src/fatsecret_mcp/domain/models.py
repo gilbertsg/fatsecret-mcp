@@ -117,6 +117,26 @@ class PeriodDaySummary:
 
 
 @dataclass(frozen=True)
+class CustomFood:
+    """A Food to create in the User's own FatSecret account, once, and then log from.
+
+    FatSecret can't edit or delete a custom Food, so each one is created at most once: `key`
+    identifies it in the registry. The nutrition is for one Serving of `serving_g` grams.
+    """
+
+    key: str
+    name: str
+    serving_label: str
+    serving_g: float
+    per_serving: Nutrition
+    saturated_fat: float | None = None
+    sugar: float | None = None
+    fibre: float | None = None
+    sodium_mg: float | None = None
+    source: str = ""
+
+
+@dataclass(frozen=True)
 class DraftEntry:
     """Only the values needed to write one confirmed Food Entry; no nutrition."""
 
@@ -124,6 +144,8 @@ class DraftEntry:
     serving_id: str
     number_of_units: float
     entry_name: str
+    custom_food: CustomFood | None = None
+    """Set when the Food is created at confirmation; food_id and serving_id are then empty."""
 
 
 @dataclass(frozen=True)
@@ -191,6 +213,19 @@ class DraftItem:
     """Set when the entry logs a catalog Food in place of a product missing from the catalog."""
     repeated_from: RepeatedFrom | None = None
     """Set when the entry logs a Food Entry from the Food Diary again."""
+    custom_food: CustomFoodDetails | None = None
+    """Set when the entry logs a custom Food, an HPB dish or a labelled product."""
+
+
+@dataclass(frozen=True)
+class CustomFoodDetails:
+    """What the User should know about a custom Food before confirming."""
+
+    name: str
+    source: str
+    creates_new_food: bool
+    """True when confirming creates a permanent Food in the User's account; False when it already exists."""
+    warnings: tuple[str, ...]
 
 
 @dataclass(frozen=True)

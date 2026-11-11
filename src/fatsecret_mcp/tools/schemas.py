@@ -18,6 +18,7 @@ from fatsecret_mcp.domain.models import (
     Confirmation,
     ConfirmedChange,
     ConfirmedEntry,
+    CustomFoodDetails,
     DaySummary,
     DraftChange,
     DraftItem,
@@ -142,7 +143,54 @@ class NutritionLabelDraftInput(BaseModel):
         max_length=MAX_NAME_LENGTH,
         description='English catalog search for a similar generic Food, e.g. "protein bar".',
     )
+    recipe_changed: bool = Field(
+        default=False,
+        description=(
+            "Only when custom Foods are on and the same product was logged before with different label "
+            "values because its recipe changed: creates a new Food named with the year."
+        ),
+    )
     assumption: Assumption = None
+
+
+class SgFoodDraftInput(BaseModel):
+    """A Singapore dish from search_sg_foods, logged with HPB's own kcal and Macros as a custom Food."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hpb_id: str = Field(
+        min_length=1,
+        max_length=MAX_ID_LENGTH,
+        description="The id of a match from search_sg_foods, e.g. D01010001.",
+    )
+    grams: float | None = Field(
+        default=None,
+        gt=0,
+        le=10000,
+        allow_inf_nan=False,
+        description="Grams eaten. Give either grams or servings.",
+    )
+    servings: float | None = Field(
+        default=None,
+        gt=0,
+        le=100,
+        allow_inf_nan=False,
+        description="How many of the item's default serving, e.g. 0.5 of '1 plate'. Or give grams.",
+    )
+    food_entry_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_NAME_LENGTH,
+        description="The Food Entry's name in the User's own words; omit to use the HPB name.",
+    )
+    assumption: Assumption = None
+
+    @model_validator(mode="after")
+    def _one_amount(self) -> SgFoodDraftInput:
+        if (self.grams is None) == (self.servings is None):
+            raise ValueError("Give either grams or servings, not both and not neither.")
+
+        return self
 
 
 class DiaryEntryDraftInput(BaseModel):
@@ -211,9 +259,12 @@ NUTRITION_LABEL_ITEM_FIELDS = {"product_name", "nutrition_label", "grams", "sear
 
 
 def _draft_item_kind(item: Any) -> str:
-    """Tells the four kinds of item apart by the fields only one kind of item has."""
+    """Tells the five kinds of item apart by the fields only one kind of item has."""
     if isinstance(item, NutritionLabelDraftInput):
         return "nutrition_label"
+
+    if isinstance(item, SgFoodDraftInput):
+        return "sg_food"
 
     if isinstance(item, EntryChangeDraftInput):
         return "entry_change"
@@ -222,6 +273,9 @@ def _draft_item_kind(item: Any) -> str:
         return "diary_entry"
 
     if isinstance(item, dict):
+        if "hpb_id" in item:
+            return "sg_food"
+
         present = [field in item for field in NUTRITION_LABEL_ITEM_FIELDS]
 
         if any(present):
@@ -239,6 +293,7 @@ def _draft_item_kind(item: Any) -> str:
 DraftItemInput = Annotated[
     Annotated[FoodDraftInput, Tag("food")]
     | Annotated[NutritionLabelDraftInput, Tag("nutrition_label")]
+    | Annotated[SgFoodDraftInput, Tag("sg_food")]
     | Annotated[DiaryEntryDraftInput, Tag("diary_entry")]
     | Annotated[EntryChangeDraftInput, Tag("entry_change")],
     Discriminator(_draft_item_kind),
@@ -417,6 +472,34 @@ class FoodSearch(BaseModel):
     attribution: str = ATTRIBUTION
 
 
+class SgServing(BaseModel):
+    label: str
+    grams: float
+
+
+class SgFoodMatch(BaseModel):
+    hpb_id: str = Field(description="Pass this as hpb_id in a draft_entries item.")
+    name: str
+    description: str | None
+    food_group: str
+    kcal_per_100g: float
+    protein_per_100g: float | None = Field(description="Null where HPB has no value.")
+    fat_per_100g: float | None
+    carbohydrate_per_100g: float | None
+    default_serving: SgServing
+    default_serving_kcal: float
+    other_servings: list[SgServing]
+    data_source: str | None = Field(description="HPB's basis: Lab Analysis, Borrowed, Derived or NIP.")
+    year: int | None
+    warning: str | None = Field(description="Set when HPB's row looks inconsistent; tell the User.")
+
+
+class SgFoodSearch(BaseModel):
+    status: Literal["found", "not_found"]
+    matches: list[SgFoodMatch]
+    attribution: str = Field(description="Show this with results taken from HPB.")
+
+
 class StandInDetails(BaseModel):
     food_name: str = Field(description="The catalog Food logged in the product's place.")
     grams_eaten: float
@@ -447,6 +530,27 @@ class RepeatedFromDetails(BaseModel):
         )
 
 
+class CustomFoodInfo(BaseModel):
+    name: str = Field(description="The Food's name in the FatSecret app.")
+    source: str = Field(description="Where the values come from, e.g. HPB SG FoodID with its basis and year.")
+    creates_new_food: bool = Field(
+        description=(
+            "True when confirming creates a permanent Food in the User's FatSecret account, which can't "
+            "be edited or deleted later. Tell the User."
+        )
+    )
+    warnings: list[str] = Field(description="Problems with the values; tell the User.")
+
+    @classmethod
+    def of(cls, details: CustomFoodDetails) -> CustomFoodInfo:
+        return cls(
+            name=details.name,
+            source=details.source,
+            creates_new_food=details.creates_new_food,
+            warnings=list(details.warnings),
+        )
+
+
 class ProposedEntry(BaseModel):
     food_id: str
     serving_id: str
@@ -467,6 +571,10 @@ class ProposedEntry(BaseModel):
     )
     repeated_from: RepeatedFromDetails | None = Field(
         description="Set when the entry repeats a Food Entry from the Food Diary, not a new match."
+    )
+    custom_food: CustomFoodInfo | None = Field(
+        default=None,
+        description="Set when the entry logs a custom Food: an HPB dish or a product read from its label.",
     )
 
     @classmethod
@@ -490,6 +598,7 @@ class ProposedEntry(BaseModel):
             catalog_name=item.catalog_name,
             stand_in=stand_in,
             repeated_from=repeated_from,
+            custom_food=CustomFoodInfo.of(item.custom_food) if item.custom_food is not None else None,
         )
 
 

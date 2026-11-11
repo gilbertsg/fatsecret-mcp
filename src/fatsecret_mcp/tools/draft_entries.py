@@ -12,6 +12,12 @@ from mcp_types import CallToolResult, ToolAnnotations
 from pydantic import SecretStr
 
 from fatsecret_mcp.config.models import User
+from fatsecret_mcp.domain.custom_foods import (
+    custom_item,
+    hpb_key,
+    label_custom_food,
+    label_drift,
+)
 from fatsecret_mcp.domain.diary_day import Clock, today
 from fatsecret_mcp.domain.draft_token import seal_draft
 from fatsecret_mcp.domain.drafts import (
@@ -58,6 +64,8 @@ from fatsecret_mcp.fatsecret.diary import UserDiary
 from fatsecret_mcp.fatsecret.errors import FatSecretError, NotFound
 from fatsecret_mcp.fatsecret.food_cache import FoodCache
 from fatsecret_mcp.fatsecret.gateway import FatSecretGateway
+from fatsecret_mcp.sgfoods.foods import hpb_custom_food, kcal_mismatch_warning
+from fatsecret_mcp.sgfoods.support import CustomFoodSupport
 from fatsecret_mcp.tools.schemas import (
     MAX_DRAFT_ID_LENGTH,
     Amounts,
@@ -72,12 +80,13 @@ from fatsecret_mcp.tools.schemas import (
     OtherDayAfter,
     ProposedChange,
     ProposedEntry,
+    SgFoodDraftInput,
     as_tool_result,
 )
 
 # The entries of each Diary Day that a Draft's items repeat from or change.
 DiaryDays = dict[date, list[FoodEntry]]
-AdditionInput = FoodDraftInput | NutritionLabelDraftInput | DiaryEntryDraftInput
+AdditionInput = FoodDraftInput | NutritionLabelDraftInput | SgFoodDraftInput | DiaryEntryDraftInput
 
 
 def register(
@@ -88,6 +97,7 @@ def register(
     diary: UserDiary,
     clock: Clock,
     signing_key: SecretStr,
+    custom: CustomFoodSupport | None = None,
 ) -> None:
     annotations = ToolAnnotations(
         title="Draft Entries",
@@ -110,9 +120,18 @@ def register(
         weight, such as "1 roll (57 g)", is logged as that weight in the Food's Serving in grams or
         ml when it has one, so the Draft may show that Serving instead.
 
-        A Nutrition Label item logs a branded product missing from the catalog as a Stand-in: the
-        closest catalog Food for search_phrase, in the amount whose kcal match the label, under the
-        product's name. Ask for a photo of the Nutrition Label unless the User already gave its values.
+        An SG food item (hpb_id from search_sg_foods, with grams or servings) logs a Singapore dish with
+        HPB's own kcal and Macros as a custom Food. The first time, confirming creates a permanent Food
+        in the User's FatSecret account, which can't be edited or deleted: custom_food.creates_new_food
+        says so, so tell the User. Show custom_food.source and any custom_food.warnings. Prefer it over
+        a US catalog match for Singapore dishes, and ask about the portion and add-ons first.
+
+        A Nutrition Label item logs a branded product missing from the catalog. When custom Foods are on
+        and the label was read from the packaging (estimated=false), it becomes a custom Food with the
+        label's own values, created once and reused by product name; otherwise it is logged as a
+        Stand-in: the closest catalog Food for search_phrase, in the amount whose kcal match the label,
+        under the product's name. Ask for a photo of the Nutrition Label
+        unless the User already gave its values.
         For a product logged before as a Stand-in,
         reuse its label from this conversation or your memory, and ask again otherwise.
         Estimate the label, with estimated=true, only when the User has no packaging. Show the
@@ -174,7 +193,9 @@ def register(
             diary_days = await _diary_days(items, diary, user_today)
 
             for item in additions_input:
-                prepared.append(await _prepared_item(item, fatsecret, food_cache, diary_days))
+                prepared.append(
+                    await _prepared_item(item, user, custom, user_today, fatsecret, food_cache, diary_days)
+                )
 
             for item in changes_input:
                 changes.append(await _prepared_change(item, fatsecret, food_cache, diary_days))
@@ -301,11 +322,21 @@ def _removal_note(changes: list[DraftChange]) -> str | None:
 
 async def _prepared_item(
     item: AdditionInput,
+    user: User,
+    custom: CustomFoodSupport | None,
+    user_today: date,
     fatsecret: FatSecretGateway,
     food_cache: FoodCache,
     diary_days: DiaryDays,
 ) -> DraftItem:
+    if isinstance(item, SgFoodDraftInput):
+        return _sg_food(item, user, custom)
+
     if isinstance(item, NutritionLabelDraftInput):
+        # A label read from packaging becomes a custom Food when they're on; an estimate stays a Stand-in.
+        if custom is not None and custom.registry is not None and not item.nutrition_label.estimated:
+            return _labelled_product(item, user, custom, user_today)
+
         return await _stand_in(item, fatsecret, food_cache)
 
     if isinstance(item, DiaryEntryDraftInput):
@@ -401,6 +432,71 @@ async def _looked_up_metric_amount(
         return None
 
     return serving_metric_amount(source, serving)
+
+
+def _sg_food(item: SgFoodDraftInput, user: User, custom: CustomFoodSupport | None) -> DraftItem:
+    """An HPB dish as a custom Food, with the values read from the SG FoodID table, not from Claude."""
+    if custom is None or custom.store is None:
+        raise ToolError("Singapore foods aren't available on this server.")
+    if custom.registry is None:
+        raise ToolError(
+            "Custom Foods are off on this server (FATSECRET_PREMIER), so HPB dishes can't be logged."
+        )
+
+    hpb = custom.store.get(item.hpb_id)
+
+    if hpb is None:
+        raise ToolError("Unknown HPB id: use the id of a match from search_sg_foods.")
+
+    registered = custom.registry.get(user.id, hpb_key(hpb.id))
+    warning = kcal_mismatch_warning(hpb)
+
+    try:
+        food = registered.food if registered is not None else hpb_custom_food(hpb)
+
+        return custom_item(
+            food,
+            exists=registered is not None,
+            grams=item.grams,
+            servings=item.servings,
+            entry_name=item.food_entry_name,
+            assumption=item.assumption,
+            warnings=(warning,) if warning else (),
+        )
+    except InvalidDraftItem as error:
+        raise ToolError(str(error)) from error
+
+
+def _labelled_product(
+    item: NutritionLabelDraftInput, user: User, custom: CustomFoodSupport, user_today: date
+) -> DraftItem:
+    """A product read from its label as a custom Food, reusing the Food made for it before."""
+    assert custom.registry is not None
+
+    label = item.nutrition_label.as_label()
+
+    # An implausible label is rejected before it costs a permanent Food.
+    check_label(label)
+
+    wanted = label_custom_food(item.product_name, label, recipe_changed=item.recipe_changed, today=user_today)
+    registered = custom.registry.get(user.id, wanted.key)
+    warnings: list[str] = []
+
+    if registered is not None:
+        drift = label_drift(registered.food, label.per_100_g)
+
+        if drift is not None:
+            warnings.append(drift)
+
+    return custom_item(
+        registered.food if registered is not None else wanted,
+        exists=registered is not None,
+        grams=item.grams,
+        servings=None,
+        entry_name=item.product_name,
+        assumption=item.assumption,
+        warnings=tuple(warnings),
+    )
 
 
 async def _stand_in(

@@ -2,6 +2,10 @@
 
 All notable changes to this project are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## Fork (unreleased)
+
+- `search_sg_foods` over a local SG FoodID table, and custom Foods for HPB dishes and labelled products. See `docs/sg-foods.md`.
+
 ## [0.3.0] - 2026-10-29
 
 ### Added

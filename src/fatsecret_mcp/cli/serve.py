@@ -33,6 +33,7 @@ async def _serve_stdio(household: Household, user: User) -> None:
     from fatsecret_mcp.fatsecret.client import connected_api
     from fatsecret_mcp.fatsecret.food_cache import FoodCache
     from fatsecret_mcp.server import build_server
+    from fatsecret_mcp.sgfoods.support import custom_foods_from_environment
 
     food_cache = FoodCache(clock=system_clock)
 
@@ -43,6 +44,7 @@ async def _serve_stdio(household: Household, user: User) -> None:
             signing_key=household.signing_key,
             daily_requests=daily_budget(len(household.users)),
             food_cache=food_cache,
+            custom=custom_foods_from_environment(),
         )
 
         await server.run_stdio_async()

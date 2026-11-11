@@ -17,7 +17,16 @@ from urllib.parse import quote
 
 import httpx2
 
-from fatsecret_mcp.domain.models import CatalogFood, DraftEntry, EntryEdit, Food, FoodEntry, Meal, Nutrition
+from fatsecret_mcp.domain.models import (
+    CatalogFood,
+    CustomFood,
+    DraftEntry,
+    EntryEdit,
+    Food,
+    FoodEntry,
+    Meal,
+    Nutrition,
+)
 from fatsecret_mcp.fatsecret import errors, parsing
 from fatsecret_mcp.fatsecret.errors import FatSecretError, PinRejected, UpstreamFailure
 from fatsecret_mcp.fatsecret.gateway import AccessToken, ConsumerKey, RequestToken
@@ -94,6 +103,16 @@ class FatSecretApi:
         body = await self._call("food_entry.create", params, user, http_method="POST")
 
         return parsing.created_food_entry_id(body)
+
+    async def create_custom_food(self, user: AccessToken, food: CustomFood) -> str:
+        body = await self._call("food.create.v2", _custom_food_params(food), user, http_method="POST")
+
+        return parsing.created_food_id(body)
+
+    async def get_custom_food(self, user: AccessToken, food_id: str) -> Food:
+        body = await self._call("food.get.v5", {"food_id": food_id}, user)
+
+        return parsing.food(body)
 
     async def edit_food_entry(self, user: AccessToken, edit: EntryEdit) -> None:
         params = {"food_entry_id": edit.food_entry_id}
@@ -187,6 +206,31 @@ class FatSecretApi:
         except httpx2.HTTPError as error:
             # The exception's text can quote the signed URL, so only its type is kept.
             raise UpstreamFailure(type(error).__name__) from None
+
+
+def _custom_food_params(food: CustomFood) -> dict[str, str]:
+    """The `food.create.v2` parameters: one Serving in grams, with the nutrition HPB or the label gives."""
+    params = {
+        "food_name": food.name,
+        "serving_size": f"{food.serving_label} ({food.serving_g:g} g)",
+        "serving_amount": parsing.number_text(food.serving_g),
+        "serving_amount_unit": "g",
+        "calories": parsing.number_text(food.per_serving.kcal),
+        "fat": parsing.number_text(food.per_serving.fat),
+        "carbohydrate": parsing.number_text(food.per_serving.carbohydrate),
+        "protein": parsing.number_text(food.per_serving.protein),
+    }
+    optional = {
+        "saturated_fat": food.saturated_fat,
+        "sugar": food.sugar,
+        "fiber": food.fibre,
+        "sodium": food.sodium_mg,
+    }
+
+    # Only values the source has: nothing is invented for the rest.
+    params.update({name: parsing.number_text(value) for name, value in optional.items() if value is not None})
+
+    return params
 
 
 def _json_object(response: httpx2.Response) -> dict[str, Any]:

@@ -48,6 +48,11 @@ def created_food_entry_id(body: dict[str, Any]) -> str:
     return _text(_object(body, "food_entry_id"), "value")
 
 
+def created_food_id(body: dict[str, Any]) -> str:
+    """The id in a `food.create.v2` response: `{"food_id": {"value": "…"}}`."""
+    return _text(_object(body, "food_id"), "value")
+
+
 def check_success(body: dict[str, Any]) -> None:
     """Accept a `food_entry.edit` or `food_entry.delete` response: `{"success": {"value": "1"}}`."""
     if _text(_object(body, "success"), "value") != "1":

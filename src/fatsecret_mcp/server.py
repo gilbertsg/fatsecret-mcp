@@ -17,12 +17,14 @@ from fatsecret_mcp.fatsecret.diary import UserDiary
 from fatsecret_mcp.fatsecret.food_cache import FoodCache
 from fatsecret_mcp.fatsecret.gateway import FatSecretGateway
 from fatsecret_mcp.icons.links import WEBSITE_URL
+from fatsecret_mcp.sgfoods.support import CustomFoodSupport
 from fatsecret_mcp.tools import (
     confirm_draft,
     draft_entries,
     get_diary_day,
     get_period_summary,
     search_foods,
+    search_sg_foods,
 )
 from fatsecret_mcp.tools.schemas import ATTRIBUTION
 
@@ -66,6 +68,11 @@ was matched in the US catalog. Corrections need a new Draft. This tool does not 
 Diary.
 - confirm_draft writes a Draft to the Food Diary: new entries first, then changes. Call it only \
 after the User explicitly approved that Draft in their latest message.
+- When search_sg_foods is available, use it first for Singapore and hawker food (it has HPB's own kcal \
+and Macros), after asking about the portion and add-ons, and draft the match as an SG food item. The \
+first time such a dish is logged, confirming creates a permanent Food in the User's FatSecret account, \
+which can't be edited or deleted: say so in the Draft. A product read from its label is made a custom \
+Food the same way. Estimates stay Stand-ins. Show the source and warnings the Draft carries.
 - Macros are protein, fat and carbohydrate, in grams.
 - Report the numbers neutrally and in the User's language. This server gives no diet, nutrition or \
 health advice.
@@ -83,12 +90,14 @@ def build_server(
     daily_requests: int,
     food_cache: FoodCache,
     icons: list[Icon] | None = None,
+    custom: CustomFoodSupport | None = None,
 ) -> MCPServer:
     """The MCP server acting as `user`: it reads their diary and writes the Drafts they confirm.
 
     Every FatSecret request it makes counts towards the User's `daily_requests`. Foods come from
     `food_cache`, which the server's owner shares between Users and keeps running. `icons` need the
-    server's public URL, so only the remote connector has them.
+    server's public URL, so only the remote connector has them. `custom` adds the SG foods search and,
+    when its registry is set, logging HPB dishes and labelled products as custom Foods.
     """
     budget = DailyBudget(
         requests=daily_requests,
@@ -125,7 +134,10 @@ def build_server(
     get_diary_day.register(server, user, diary, clock)
     get_period_summary.register(server, user, diary)
     search_foods.register(server, budgeted, food_cache)
-    draft_entries.register(server, user, budgeted, food_cache, diary, clock, signing_key)
-    confirm_draft.register(server, user, budgeted, diary, clock, signing_key)
+    draft_entries.register(server, user, budgeted, food_cache, diary, clock, signing_key, custom)
+    confirm_draft.register(server, user, budgeted, diary, clock, signing_key, custom)
+
+    if custom is not None and custom.store is not None:
+        search_sg_foods.register(server, custom.store)
 
     return server

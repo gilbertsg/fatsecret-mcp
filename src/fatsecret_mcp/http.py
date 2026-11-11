@@ -204,6 +204,7 @@ class _UserServers:
     async def _serve_user(self, user: User, *, task_status: TaskStatus[Starlette]) -> None:
         # Discovery and token exchange do not need tools, diary caches or their imports.
         from fatsecret_mcp.server import build_server
+        from fatsecret_mcp.sgfoods.support import custom_foods_from_environment
 
         server = build_server(
             user=user,
@@ -213,6 +214,7 @@ class _UserServers:
             daily_requests=daily_budget(len(self.household.users)),
             food_cache=self.food_cache,
             icons=server_icons(self.auth.identity.base_url),
+            custom=custom_foods_from_environment(),
         )
         security = TransportSecuritySettings(
             allowed_hosts=[urlsplit(self.auth.identity.base_url).netloc],

@@ -9,12 +9,14 @@ from typing import Any
 
 from fatsecret_mcp.domain.models import (
     Additions,
+    CustomFood,
     Draft,
     DraftEntry,
     EntryChange,
     EntryEdit,
     EntryRemoval,
     Meal,
+    Nutrition,
 )
 from fatsecret_mcp.signing import from_base64url, signature, signature_matches, to_base64url
 
@@ -26,7 +28,7 @@ class InvalidDraft(ValueError):
 def seal_draft(draft: Draft, signing_key: str) -> str:
     additions = draft.additions
     entries = additions.entries if additions is not None else ()
-    items = [asdict(entry) for entry in entries]
+    items = [_item_payload(entry) for entry in entries]
     changes = [_change_payload(change) for change in draft.changes]
     # A Draft without changes keeps the shape it had before changes existed, so either opens.
     payload: dict[str, Any] = {
@@ -62,6 +64,16 @@ def open_draft(draft_id: str, signing_key: str, *, user_id: str, now: datetime) 
         raise InvalidDraft("This Draft has expired. Draft the Food Entries again.")
 
     return draft
+
+
+def _item_payload(entry: DraftEntry) -> dict[str, Any]:
+    payload = asdict(entry)
+
+    # An entry of a catalog Food keeps the shape it had before custom Foods existed.
+    if entry.custom_food is None:
+        del payload["custom_food"]
+
+    return payload
 
 
 def _change_payload(change: EntryChange) -> dict[str, Any]:
@@ -108,11 +120,30 @@ def _additions(payload: dict[str, Any]) -> Additions | None:
 
 
 def _draft_entry(item: dict[str, Any]) -> DraftEntry:
+    custom = item.get("custom_food")
+
     return DraftEntry(
         food_id=item["food_id"],
         serving_id=item["serving_id"],
         number_of_units=item["number_of_units"],
         entry_name=item["entry_name"],
+        custom_food=custom_food_from_dict(custom) if custom is not None else None,
+    )
+
+
+def custom_food_from_dict(values: dict[str, Any]) -> CustomFood:
+    """A CustomFood from its `asdict` form, as sealed in a Draft id or stored in the registry."""
+    return CustomFood(
+        key=values["key"],
+        name=values["name"],
+        serving_label=values["serving_label"],
+        serving_g=values["serving_g"],
+        per_serving=Nutrition(**values["per_serving"]),
+        saturated_fat=values["saturated_fat"],
+        sugar=values["sugar"],
+        fibre=values["fibre"],
+        sodium_mg=values["sodium_mg"],
+        source=values["source"],
     )
 
 

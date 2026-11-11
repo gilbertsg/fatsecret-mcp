@@ -14,7 +14,17 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 import anyio.lowlevel
 
-from fatsecret_mcp.domain.models import CatalogFood, DraftEntry, EntryEdit, Food, FoodEntry, Meal, Nutrition
+from fatsecret_mcp.domain.models import (
+    CatalogFood,
+    CustomFood,
+    DraftEntry,
+    EntryEdit,
+    Food,
+    FoodEntry,
+    Meal,
+    Nutrition,
+    Serving,
+)
 from fatsecret_mcp.fatsecret.errors import (
     CredentialsRejected,
     FatSecretError,
@@ -40,6 +50,12 @@ class FakeFatSecret:
         self._approvals: dict[str, tuple[str, AccessToken]] = {}
         self._in_flight = 0
         self._request_limit: int | None = None
+        self._custom_foods: dict[str, dict[str, Food]] = {}
+        self._entry_failure: FatSecretError | None = None
+        self.created_foods: list[CustomFood] = []
+        """Every custom Food created, in order: they can't be deleted, so duplicates would show here."""
+        self.custom_serving_units = 1.0
+        """The FatSecret units a created Food's Serving holds."""
         self.requests = 0
         """How many calls FatSecret has answered."""
         self.most_in_flight = 0
@@ -95,6 +111,10 @@ class FakeFatSecret:
 
         self._diaries[user.token] = remaining
         self._deleted_days[user.token].add(day)
+
+    def fail_entry_creation_with(self, error: FatSecretError | None) -> None:
+        """Only food_entry.create fails, so a custom Food can be created and its entry still fail."""
+        self._entry_failure = error
 
     def fail_with(self, error: FatSecretError | None) -> None:
         """Every call from now on raises `error`, as if FatSecret had answered with it; None stops it."""
@@ -167,9 +187,42 @@ class FakeFatSecret:
 
         return totals
 
+    async def create_custom_food(self, user: AccessToken, food: CustomFood) -> str:
+        await self._request()
+        self._authenticate(user)
+
+        food_id = f"custom-{len(self.created_foods) + 1}"
+        serving = Serving(
+            id=f"{food_id}-serving",
+            description=f"{food.serving_label} ({food.serving_g:g} g)",
+            metric_amount=food.serving_g,
+            metric_unit="g",
+            number_of_units=self.custom_serving_units,
+            nutrition=food.per_serving,
+        )
+
+        self.created_foods.append(food)
+        self._custom_foods.setdefault(user.token, {})[food_id] = Food(
+            id=food_id, name=food.name, brand=None, servings=[serving]
+        )
+
+        return food_id
+
+    async def get_custom_food(self, user: AccessToken, food_id: str) -> Food:
+        await self._request()
+        self._authenticate(user)
+
+        try:
+            return self._custom_foods[user.token][food_id]
+        except KeyError:
+            raise NotFound() from None
+
     async def create_food_entry(self, user: AccessToken, entry: DraftEntry, meal: Meal, day: date) -> str:
         await self._request()
         self._authenticate(user)
+
+        if self._entry_failure is not None:
+            raise self._entry_failure
 
         per_unit = self._nutrition_per_unit(user, entry.food_id, entry.serving_id)
         nutrition = _scaled(per_unit, entry.number_of_units)
@@ -221,7 +274,7 @@ class FakeFatSecret:
 
     def _nutrition_per_unit(self, user: AccessToken, food_id: str, serving_id: str) -> Nutrition:
         """Like FatSecret, the Fake knows a Food from its catalog or from the User's own Food Entries."""
-        food = self._catalog.get(food_id)
+        food = self._catalog.get(food_id) or self._custom_foods.get(user.token, {}).get(food_id)
         servings = food.servings if food is not None else []
         entries = self._diaries[user.token]
 
